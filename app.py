@@ -20,9 +20,9 @@ def fresh():
     global strategies
     if strategies is None:
         strategies = {'message':{},'prompt':[],'ai':[]}
-        return 1
+        return strategies
     else:
-        return 0
+        return {}
 
 @app.route('/strategize/<user>/<message>')
 def chat(user,message):
