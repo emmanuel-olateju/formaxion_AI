@@ -1,6 +1,6 @@
 import os
 import json
-from flask import Flask,request
+from flask import Flask,request,jsonify
 import openai
 
 app = Flask(__name__)
@@ -22,8 +22,11 @@ def fresh():
         strategies = {'message':{},'prompt':[],'ai':[]}
     return strategies
 
-@app.route('/strategize/<user>/<message>')
-def chat(user,message):
+@app.route('/strategize',methods=['POST'])
+def chat():
+    data = request.get_json()
+    user = data.get('username')
+    message = data.get('message')
     global strategies
     if strategies is None:
         strategies = {'message':[],'prompt':[],'strategy':[],'code':[]}
@@ -52,11 +55,11 @@ def chat(user,message):
         'role':'assistant',
         'content':pseudocode
     })
-    return {
+    return jsonify({
         'message':message,
         'strategy':generated_strategy,
         'code':pseudocode
-    }
+    })
 
 if __name__=='__main__':
     app.run(debug=True)
