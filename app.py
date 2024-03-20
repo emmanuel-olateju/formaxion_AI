@@ -19,7 +19,7 @@ strategies = None
 def fresh():
     global strategies
     if strategies is None:
-        strategies = {'message':{},'prompt':[],'ai':[]}
+        strategies = {'message':[],'strategy':[],'code':[]}
     return strategies
 
 @app.route('/strategize',methods=['POST'])
@@ -35,13 +35,9 @@ def chat():
         'content':message
     })
     # IMPLEMENT MORE ADVANCED PROMPTING
-    strategies['prompt'].append({
-        'role':'user',
-        'content':f'{message}. Speak in pseudocode and explain pros and cons in plain English to a teenager'
-    })
+    prompt = f'{message}. Speak in pseudocode and explain pros and cons in plain English to a teenager'
     # Generate Strategy in pseudocode and save in strategy chat_history object
-    generated_strategy = generate_strategy([strategies['prompt'][-1]])
-    print(generated_strategy)
+    generated_strategy = generate_strategy([{'role':'user','content':prompt}])
     strategies['strategy'].append({
         'role':'assistant',
         'content':generated_strategy
