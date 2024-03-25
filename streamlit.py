@@ -6,10 +6,12 @@ import time
 def get_strategy(prompt):
     payload = {
         'username':st.session_state.username,
-        'message':prompt
+        'message':prompt,
+        'history':(st.session_state.chats['message'],st.session_state.chats['strategy'])
     }
     print('running')
     response = requests.post('https://formaxion-ai.onrender.com/strategize',json=payload)
+    # response = requests.post('http://127.0.0.1:5000/strategize',json=payload)
     print('response received')
     if response.status_code == 200:
         response = response.json()
@@ -25,6 +27,8 @@ def get_strategy(prompt):
             'role':'assistant',
             'content':response['code']
         })
+    else:
+        print(response)
 
 # Streamlit app layout
 def main():
