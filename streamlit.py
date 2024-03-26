@@ -10,8 +10,8 @@ def get_strategy(prompt):
         'history':st.session_state.chats
     }
     print('running')
-    # response = requests.post('https://formaxion-ai.onrender.com/strategize',json=payload)
-    response = requests.post('http://127.0.0.1:5000/strategize',json=payload)
+    response = requests.post('https://formaxion-ai.onrender.com/strategize',json=payload)
+    # response = requests.post('http://127.0.0.1:5000/strategize',json=payload)
     print('response received')
     if response.status_code == 200:
         response = response.json()
