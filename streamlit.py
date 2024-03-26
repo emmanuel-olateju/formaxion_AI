@@ -12,7 +12,7 @@ from symbol_pair import pairs
 with open('stocks.json', "r") as json_file:
     stocks = json.load(json_file)
 
-client = OpenAI(api_key=os.environ.get('OPENAI_KEY'))
+client = OpenAI(api_key=st.secrets['OPENAI_KEY'])
 
 def create_message(prompt):
     st.session_state.messages = client.beta.threads.messages.create(
