@@ -7,52 +7,53 @@ app = Flask(__name__)
 
 openai.api_key = os.environ.get('OPENAI_KEY')
 
+global context
+context = [{
+    'user':'system',
+    'content': f'''
+    You are a system to assist in trading strategies within the Nigerian stock market,
+    your operations do not allow you to perform in the context of trading non Nigerian stocks,
+    your operations also do not allow you to do do any other thing apart from generating strategies
+    and algorithms that can improve or aid trading in the Nigerian stock market.
+    All of your responses apart from Yes/No responses should be in form of direct speech with the user using the first person language.
+    Your prompts will also involve conditionals indicated by IF and ELSE which serve as aguide for the construct of your repsonses based on scenarios.
+    The description of the construct of yout response will be indented under the conditionals and should only be executed after checking the conditions in brackets.
+    The response construct under conditionals will be delimited by double dashes. ELSE will not have conditions in brackets but will contain response constructs indented
+    below.
+    '''
+}]
+
 global AI_Agent_description
 AI_agent_description = '''
     Hi, I am Asakoro.
-    I am your trading assistant developed to help you generate strategies for optimizing your return on investement in the African stock exchange market.
-    Here is a list of what I can do:
-        1. Generate algorithm for trading strategies
-        2. Explain trading concepts to you
-        3. Provide recent data on the African stock exchange market
-        4. Provide statistics on common winning strategies in the African stock market
-    Here is how I work, tell me what stocks you are interested in and I would generate strategies for you. You could also tell me what trading or stock exchange market 
-    concept you are struggling with and I would do my best to explain it to you at a granular level. You could request statistics on trends in the African stock 
-    exchange market or you could ask me for winning strategies for prticular stocks.
+    I am your trading assistant developed to help you generate strategies for optimizing your return on investement in the Nigerian stock exchange market.
 '''
 
+def rules_template(rules):
+    global context
+    return f'Basic rules you should abide by to generate your response are described as follows: {rules}'
 
-def personality_prompt_template(prompt,chat_history):
-    global AI_agent_description
-    prompt_template = f"""
-    Note the following:
-        1. The PROMPT given is delimited using xml tags.
-        2. The CHAT_HISTORY is delimited using triple dashes.
-        3. The CHAT_HISTORY is a tuple of two elements.
-            a. The first element is a list of dictionaries with keys role and content, where the content is a past PROMPT from the user.
-            b. The second element is a list of dictionaries with keys role and content, where the content is one of your past response to the \
-            appropriate index of PROMPT input in the first tuple element.
+def personality_prompt_template(prompt):
+    prompt_template = rules_template(context[0]['content'])+f"""
+    If the input which is delimited by xml tags asks questions about your identity, capabilities, functions, or the input is a greeting or salutation, then \
+    you respond with a similar greeting describing your capabilities and functionalities based on the basic rules you are to abide by in generating responses. \
+    If in your chat history delimited by triple dashes, you have described your identity or functionalities before, in your response remind the user that you have \
+    described your functions before. But if the input does not meet any of the criteria stated respond with a simple yes.
 
-        SCAN through the CHAT_HISTORY
-        IF you have described youself anywhere in the CHAT_HISTORY to the user
-            Proceed with the next actions, witin the context of your past responses, also reminding the user you have described yourself previously
-
-        IF the PROMPT is not about stock trading,
-        Forget your past response about the AI agent or your past response to any greetings
-            IF the PROMPT is not asking about you the AI agent AND it is not a greeting or salutation,
-                generate a polite response explaining the following:
-                    1. You are an AI assistant and adviser for stock trading in the African stock exchange market
-                    2. You cannot provide answers to questions outside African stocks trading
-                    3. You would need user input about the african stock market or taking actions as a trader in the african stock market
-            ELSE:
-                IF you find a greeting within the PROMPT:
-                    respond with a polite greeting also and then concisely describe yourself based on this description {AI_agent_description}
-                ELSE:
-                    explicitly describe yourself based on this description {AI_agent_description}
-
-        PROMPT: <tag>{prompt}</tag>
-        CHAT_HISTORY: ---{chat_history}---
+    INPUT: <tag>{prompt}</tag>
     """
+    return prompt_template
+
+def strategy_generation_template(prompt):
+    global AI_agent_description, context
+    prompt_template = rules_template(context[0]['content'])+f"""
+    If the input delimited by xml tags is requesting for the generation of a strategy for an institution or for particular kind of stocks, respond with a strategy \
+    you come up with as requested by the user. Your output should contain two things, one a pseudocode implementation of the strategy, and two an explaination of \
+    the strategy.
+
+    INPUT: <tag>{prompt}</tag>
+    """
+
     return prompt_template
 
 def generate_strategy(prompt):
@@ -87,28 +88,11 @@ def chat():
         'content':message
     })
     '''PERSONALITY TEST'''
-    generated_strategy = generate_strategy(personality_prompt_template(message,history))
-    # print(' ')
-    # print(' ')
-    # print(' ')
-    # print(' ')
-    # print(f'strategy:{generated_strategy}')
-    # prompt = f'{message}. Speak in pseudocode and explain pros and cons in plain English to a teenager'
-    # Generate Strategy in pseudocode and save in strategy chat_history object
-    # generated_strategy = generate_strategy([{'role':'user','content':prompt}])
-    # strategies['strategy'].append({
-    #     'role':'assistant',
-    #     'content':generated_strategy
-    # })
-    # # Generate pseudocode of strategy
-    # pseudocode = generate_strategy([{
-    #     'role':'assistant',
-    #     'content':f'extract the pseudocode from this strategy explained as thus:{generated_strategy}'
-    # }])
-    # strategies['code'].append({
-    #     'role':'assistant',
-    #     'content':pseudocode
-    # })
+    generated_strategy = generate_strategy(personality_prompt_template(message))
+    if 'yes' in generated_strategy.lower():
+        print('Yes')
+        generated_strategy = generate_strategy(strategy_generation_template(message))
+   
     return jsonify({
         'message':message,
         'strategy':generated_strategy,
