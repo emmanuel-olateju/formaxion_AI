@@ -37,7 +37,7 @@ def personality_prompt_template(prompt):
     prompt_template = rules_template(context[0]['content'])+f"""
     If the input which is delimited by xml tags asks questions about your identity, capabilities, functions, or the input is a greeting or salutation, then \
     you respond with a similar greeting describing your capabilities and functionalities based on the basic rules you are to abide by in generating responses. \
-    If in your chat history delimited by triple dashes, you have described your identity or functionalities before, in your response remind the user that you have \
+    If in your chat history you have described your identity or functionalities before, in your response remind the user that you have \
     described your functions before. But if the input does not meet any of the criteria stated respond with a simple yes.
 
     INPUT: <tag>{prompt}</tag>
@@ -47,9 +47,12 @@ def personality_prompt_template(prompt):
 def strategy_generation_template(prompt):
     global AI_agent_description, context
     prompt_template = rules_template(context[0]['content'])+f"""
-    If the input delimited by xml tags is requesting for the generation of a strategy for an institution or for particular kind of stocks, respond with a strategy \
-    you come up with as requested by the user. Your output should contain two things, one a pseudocode implementation of the strategy, and two an explaination of \
-    the strategy.
+    If the input delimited by xml tags is requesting for the generation of a strategy for an institution or for particular kind of stocks. \
+    Check if the institution, or stocks the user is requesting a strategy for operates within Nigeria. \
+    If the institution or stock can be found in the Nigerian stock market, then generate a strategy as requested by the user. \
+    If the stock cannot be found within the Nigerian stock market, generate a strategy for any example stock you can find \
+    Your output should contain three things, one a pseudocode implementation of the strategy, then the implementation of the strategy in python and an explaination \
+    of the strategy.
 
     INPUT: <tag>{prompt}</tag>
     """
@@ -57,16 +60,20 @@ def strategy_generation_template(prompt):
     return prompt_template
 
 def generate_strategy(prompt):
-    response = openai.chat.completions.create(
-        model = 'gpt-3.5-turbo',
-        messages = [{
+    if isinstance(prompt,str):
+        msg = [{
             'role':'user',
             'content':prompt
         }]
+    elif isinstance(prompt,list):
+        msg = prompt
+    response = openai.chat.completions.create(
+        model = 'gpt-3.5-turbo-0125',
+        messages = msg,
+        temperature=0.5
     )
     return response.choices[0].message.content
 
-strategies = None
 
 @app.route('/')
 def fresh():
@@ -82,19 +89,17 @@ def chat():
     user = data.get('username')
     message = data.get('message')
     history = data.get('history')
-    strategies = {'message':[],'strategy':[],'code':[]}
-    strategies['message'].append({
-        'role':'user',
-        'content':message
-    })
+    assert isinstance(history,list)
+    assert history[-1]['role']=='user'
+
     '''PERSONALITY TEST'''
     generated_strategy = generate_strategy(personality_prompt_template(message))
     if 'yes' in generated_strategy.lower():
-        print('Yes')
-        generated_strategy = generate_strategy(strategy_generation_template(message))
+        prompt = strategy_generation_template(message)
+        history[-1]['content'] = prompt
+        generated_strategy = generate_strategy(history[-1]['content'])
    
     return jsonify({
-        'message':message,
         'strategy':generated_strategy,
         'code':''
     })

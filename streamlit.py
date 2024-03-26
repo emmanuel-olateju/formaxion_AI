@@ -10,15 +10,11 @@ def get_strategy(prompt):
         'history':st.session_state.chats
     }
     print('running')
-    response = requests.post('https://formaxion-ai.onrender.com/strategize',json=payload)
-    # response = requests.post('http://127.0.0.1:5000/strategize',json=payload)
+    # response = requests.post('https://formaxion-ai.onrender.com/strategize',json=payload)
+    response = requests.post('http://127.0.0.1:5000/strategize',json=payload)
     print('response received')
     if response.status_code == 200:
         response = response.json()
-        st.session_state.chats.append({
-            'role':'user',
-            'content':response['message']
-        })
         st.session_state.chats.append({
             'role':'assistant',
             'content':response['strategy']
@@ -40,6 +36,10 @@ def main():
 
     # Check if the user has entered a message
     if chat_input:=st.chat_input('What Strategy are you looking for'):
+        st.session_state.chats.append({
+            'role':'user',
+            'content':chat_input
+        })
         print('prompt entered')
         get_strategy(chat_input)
         for i in range(len(st.session_state.chats)):
