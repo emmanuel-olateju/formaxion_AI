@@ -183,3 +183,5 @@ pairs = {
   "WEMA BANK PLC. [CG+]": "WEMABANK",
   "ZENITH BANK PLC [CG+]": "ZENITHBANK"
 }
+
+supported_indicators = ['current price', 'exponential moving average of price', 'moving average of price', 'relative strength index', 'standard deviation of price']

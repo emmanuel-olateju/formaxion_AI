@@ -1,0 +1,4 @@
+DEV_NEW_CHAT_URL: "http://127.0.0.1:5000/new_chat"
+DEV_CHAT_URL: "http://127.0.0.1:5000/chat"
+NEW_CHAT_URL: "https://formaxion-ai.onrender.com/new_chat"
+CHAT_URL: "https://formaxion-ai.onrender.com/chat"
