@@ -11,15 +11,12 @@ from symbol_pair import pairs,supported_indicators
 import pymongo
 from pymongo import MongoClient
 
-with open("api_urls.yml", 'r') as file:
-  # Read the file contents
-  api_urls = yaml.safe_load(file)
 with open("strategy_params.yml", 'r') as file:
   # Read the file contents
   strategy_params = yaml.safe_load(file)
 
 print('Attmemting MongoDB connection.................')
-cluster = MongoClient(api_urls['MONGO_URL'])
+cluster = MongoClient(os.environ.get('MONGO_URL'))
 try:
     cluster.admin.command('ping')
     print("Pinged your deployment. You successfully connected to MongoDB!")
@@ -191,10 +188,12 @@ def get_chat():
     if user_:
         user_threads_ = user_.get("threads")
         messages = user_threads_[thread_id]['messages']
+        tokens = user_threads_[thread_id]['tokens']
         return jsonify({
             'username':user,
             'thread_id':thread_id,
-            'messages':messages
+            'messages':messages,
+            'tokens':tokens
         })
     else:
         error_response = {
@@ -215,9 +214,9 @@ def create_chat():
         thread = client.beta.threads.create()
         user_threads_ = user_.get("threads")
         if user_threads_:
-            user_threads_[thread.id]=dict().fromkeys(['name','messages','time'])
+            user_threads_[thread.id]=dict().fromkeys(['name','messages','time','tokens'])
         else:
-            user_threads_ = {thread.id:dict().fromkeys(['name','messages','time'])}
+            user_threads_ = {thread.id:dict().fromkeys(['name','messages','time','tokens'])}
         collection.update_one(
                 {"user": user},
                 {"$set": {"threads": user_threads_}}
@@ -285,52 +284,12 @@ def chat():
         }
         return jsonify(error_response), 400
     
-    # if user not in threads:
-    #     error_response = {
-    #         'error': 'Bad Request',
-    #         'message': 'user should be created with /new_chat endpoint'
-    #     }
-    #     return jsonify(error_response), 400
-    # elif thread_id not in threads[user]:
-    #     error_response = {
-    #         'error': 'Bad Request',
-    #         'message': 'Selected chat does not exist for current user'
-    #     }
-    #     return jsonify(error_response), 400
-    # else:
-    #     message = client.beta.threads.messages.create(
-    #         thread_id = thread_id,
-    #         role = "user",
-    #         content = message
-    #     )
-    #     run = client.beta.threads.runs.create(
-    #         thread_id = thread_id,
-    #         assistant_id = assistant.id,
-    #     )
-    #     while run.status in ['queued', 'in_progress', 'cancelling']:
-    #         time.sleep(1) # Wait for 1 second
-    #         run = client.beta.threads.runs.retrieve(
-    #             thread_id = thread_id,
-    #             run_id = run.id
-    #         )
-    #     if run.status == 'completed': 
-    #         messages = client.beta.threads.messages.list(
-    #             thread_id = thread_id
-    #         )
-    #         messages.data.reverse()
-    #         return_messages = []
-    #         for thread_message in messages.data:
-    #             message = client.beta.threads.messages.retrieve(
-    #                 thread_id = thread_id,
-    #                 message_id = thread_message.id
-    #             )
-    #             return_messages.append({
-    #                 'role':message.role,
-    #                 'content':message.content[0].text.value,
-    #             })
-    
     # update database thread_id with return_messages
     user_threads_[thread_id]['messages'] = return_messages
+    if user_threads_[thread_id]['tokens'] == None:
+        user_threads_[thread_id]['tokens'] = []
+    user_threads_[thread_id]['tokens'].append(run.usage.prompt_tokens)
+    user_threads_[thread_id]['tokens'].append(run.usage.completion_tokens)
     collection.update_one(
             {"user": user},
             {"$set": {"threads": user_threads_}}
@@ -340,10 +299,7 @@ def chat():
         'username':user,
         'thread_id':thread_id,
         'messages':return_messages,
-        'tokens':{
-            'prompt_tokens':run.usage.prompt_tokens,
-            'completion_tokens':run.usage.completion_tokens
-        }
+        'tokens':user_threads_[thread_id]['tokens']
     })
 
 if __name__=='__main__':
