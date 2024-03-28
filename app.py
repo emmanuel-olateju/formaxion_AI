@@ -8,25 +8,44 @@ from flask import Flask,request,jsonify
 from openai import OpenAI
 from symbol_pair import pairs,supported_indicators
 
-app = Flask(__name__)
-client = OpenAI(api_key=os.environ.get('OPENAI_KEY'))
-return_message = None
+import pymongo
+from pymongo import MongoClient
 
+with open("api_urls.yml", 'r') as file:
+  # Read the file contents
+  api_urls = yaml.safe_load(file)
 with open("strategy_params.yml", 'r') as file:
   # Read the file contents
   strategy_params = yaml.safe_load(file)
+
+print('Attmemting MongoDB connection.................')
+cluster = MongoClient(api_urls['MONGO_URL'])
+try:
+    cluster.admin.command('ping')
+    print("Pinged your deployment. You successfully connected to MongoDB!")
+except Exception as e:
+    print(e)
+    exit()
+time.sleep(3)
+db = cluster["formaxion"]
+collection = db["users_threads"]
+db_connect = True
+
+app = Flask(__name__)
+client = OpenAI(api_key=os.environ.get('OPENAI_KEY'))
+return_message = None
 
 assistant = client.beta.assistants.create(
     name='strategy_generator',
     instructions=f'''
         You are FormaxionBot, an assistant on the Formaxion website that helps trader in generating strategies for stock trading on Nigerian stock Exchange (NGX).
         Formaxion is a cutting-edge web platform revolutionizing the Nigerian stock trading landscape. Tailored for both seasoned investors and newcomers, 
-        traders can create strategies using drag and drop or prompt you to create strategy for them. the generated strategy will be sent backtesting engine 
-        for analysis so the strategy you generate must always be in json format. the currently supported indicators are current price, 
-        exponential moving average of price, moving average of price,  relative strength index, standard deviation of price. there will be support for other indicators in the future.
-        the building blocks of the strategies are asset, weight, conditional, filter which has its corresponding json representation. 
+        traders can create strategies using drag and drop or prompt you to create strategy for them. the generated strategy will be sent to the backtesting engine 
+        for analysis so the strategy you generate must always be in json format. The currently supported indicators are current price, 
+        exponential moving average of price, moving average of price,  relative strength index, standard deviation of price. There will be support for other indicators in the 
+        future.The building blocks of the strategies are asset, weight, conditional, filter which has its corresponding json representation. 
 
-        {pairs}is the company name and symbol pairing for stocks listed on the Nigerian Stock Exchange (NGX) . 
+        {pairs} is the company name and symbol pairing for stocks listed on the Nigerian Stock Exchange (NGX) . 
 
         asset = {{
             "type":"asset",
@@ -139,18 +158,74 @@ def fresh():
     }
 })
 
-@app.route('/new_chat',methods=['POST'])
-def create_chat():
+@app.route('/check_user',methods=['POST'])
+def check_user():
+
     data = request.get_json()
     user = data.get('username')
 
-    thread = client.beta.threads.create()
-    if user not in threads:
-        threads[user] = dict()
-    threads[user][thread.id] = thread
+    user_ = collection.find_one({"user": user})
+    if user_:
+        user_threads_ = user_.get("threads")
+    else:
+        user_threads_ = {}
+        new_user = {
+            "user": user,
+            "threads": user_threads_
+        }
+        collection.insert_one(new_user)
 
     return jsonify({
         'username':user,
+        'threads':user_threads_
+    })
+
+@app.route('/get_chat',methods=['POST'])
+def get_chat():
+
+    data = request.get_json()
+    user = data.get('username')
+    thread_id = data.get('thread_id')
+
+    user_ = collection.find_one({"user": user})
+    if user_:
+        user_threads_ = user_.get("threads")
+        messages = user_threads_[thread_id]['messages']
+        return jsonify({
+            'username':user,
+            'thread_id':thread_id,
+            'messages':messages
+        })
+    else:
+        error_response = {
+            'error': 'Bad Request',
+            'message': 'User not found in database'
+        }
+        return jsonify(error_response), 400
+
+
+@app.route('/new_chat',methods=['POST'])
+def create_chat():
+
+    data = request.get_json()
+    user = data.get('username')
+
+    user_ = collection.find_one({"user": user})
+    if user_:
+        thread = client.beta.threads.create()
+        user_threads_ = user_.get("threads")
+        if user_threads_:
+            user_threads_[thread.id]=dict().fromkeys(['name','messages','time'])
+        else:
+            user_threads_ = {thread.id:dict().fromkeys(['name','messages','time'])}
+        collection.update_one(
+                {"user": user},
+                {"$set": {"threads": user_threads_}}
+            )
+
+    return jsonify({
+        'username':user,
+        'threads':user_threads_,
         'thread_id':thread.id
     })
     
@@ -162,55 +237,113 @@ def chat():
     thread_id = data.get('thread_id')
     message = data.get('message')
 
-    if user not in threads:
+    user_ = collection.find_one({"user": user})
+    if user_:
+        user_threads_ = user_.get("threads")
+        if thread_id not in user_threads_:
+            error_response = {
+                'error': 'Bad Request',
+                'message': 'Selected chat does not exist for current user'
+            }
+            return jsonify(error_response), 400
+        else:
+            message = client.beta.threads.messages.create(
+                thread_id = thread_id,
+                role = "user",
+                content = message
+            )
+            run = client.beta.threads.runs.create(
+                thread_id = thread_id,
+                assistant_id = assistant.id,
+            )
+            while run.status in ['queued', 'in_progress', 'cancelling']:
+                time.sleep(1) # Wait for 1 second
+                run = client.beta.threads.runs.retrieve(
+                    thread_id = thread_id,
+                    run_id = run.id
+                )
+            if run.status == 'completed': 
+                messages = client.beta.threads.messages.list(
+                    thread_id = thread_id
+                )
+                messages.data.reverse()
+                return_messages = []
+                for thread_message in messages.data:
+                    message = client.beta.threads.messages.retrieve(
+                        thread_id = thread_id,
+                        message_id = thread_message.id
+                    )
+                    return_messages.append({
+                        'role':message.role,
+                        'content':message.content[0].text.value,
+                    })
+
+    else:
         error_response = {
             'error': 'Bad Request',
             'message': 'user should be created with /new_chat endpoint'
         }
         return jsonify(error_response), 400
-    elif thread_id not in threads[user]:
-        error_response = {
-            'error': 'Bad Request',
-            'message': 'Selected chat does not exist for current user'
-        }
-        return jsonify(error_response), 400
-    else:
-        message = client.beta.threads.messages.create(
-            thread_id = thread_id,
-            role = "user",
-            content = message
+    
+    # if user not in threads:
+    #     error_response = {
+    #         'error': 'Bad Request',
+    #         'message': 'user should be created with /new_chat endpoint'
+    #     }
+    #     return jsonify(error_response), 400
+    # elif thread_id not in threads[user]:
+    #     error_response = {
+    #         'error': 'Bad Request',
+    #         'message': 'Selected chat does not exist for current user'
+    #     }
+    #     return jsonify(error_response), 400
+    # else:
+    #     message = client.beta.threads.messages.create(
+    #         thread_id = thread_id,
+    #         role = "user",
+    #         content = message
+    #     )
+    #     run = client.beta.threads.runs.create(
+    #         thread_id = thread_id,
+    #         assistant_id = assistant.id,
+    #     )
+    #     while run.status in ['queued', 'in_progress', 'cancelling']:
+    #         time.sleep(1) # Wait for 1 second
+    #         run = client.beta.threads.runs.retrieve(
+    #             thread_id = thread_id,
+    #             run_id = run.id
+    #         )
+    #     if run.status == 'completed': 
+    #         messages = client.beta.threads.messages.list(
+    #             thread_id = thread_id
+    #         )
+    #         messages.data.reverse()
+    #         return_messages = []
+    #         for thread_message in messages.data:
+    #             message = client.beta.threads.messages.retrieve(
+    #                 thread_id = thread_id,
+    #                 message_id = thread_message.id
+    #             )
+    #             return_messages.append({
+    #                 'role':message.role,
+    #                 'content':message.content[0].text.value,
+    #             })
+    
+    # update database thread_id with return_messages
+    user_threads_[thread_id]['messages'] = return_messages
+    collection.update_one(
+            {"user": user},
+            {"$set": {"threads": user_threads_}}
         )
-        run = client.beta.threads.runs.create(
-            thread_id = thread_id,
-            assistant_id = assistant.id,
-        )
-        while run.status in ['queued', 'in_progress', 'cancelling']:
-            time.sleep(1) # Wait for 1 second
-            run = client.beta.threads.runs.retrieve(
-                thread_id = thread_id,
-                run_id = run.id
-            )
-        if run.status == 'completed': 
-            messages = client.beta.threads.messages.list(
-                thread_id = thread_id
-            )
-            messages.data.reverse()
-            return_messages = []
-            for thread_message in messages.data:
-                message = client.beta.threads.messages.retrieve(
-                    thread_id = thread_id,
-                    message_id = thread_message.id
-                )
-                return_messages.append({
-                    'role':message.role,
-                    'content':message.content[0].text.value
-                })
 
-   
     return jsonify({
         'username':user,
         'thread_id':thread_id,
-        'messages':return_messages
+        'messages':return_messages,
+        'tokens':{
+            'prompt_tokens':run.usage.prompt_tokens,
+            'completion_tokens':run.usage.completion_tokens
+        }
     })
 
 if __name__=='__main__':
