@@ -6,9 +6,6 @@ import os
 import json
 import yaml
 
-with open("api_urls.yml", 'r') as file:
-  api_urls = yaml.safe_load(file)
-
 def check_user():
     response = requests.post(os.environ.get('CHECK_USER_URL'),json={'username':'test_user'})
     assert response.status_code == 200
