@@ -2,6 +2,8 @@ import os
 import time
 import json
 import yaml
+import datetime
+import pandas as pd
 
 
 from flask import Flask,request,jsonify
@@ -290,6 +292,7 @@ def chat():
         user_threads_[thread_id]['tokens'] = []
     user_threads_[thread_id]['tokens'].append(run.usage.prompt_tokens)
     user_threads_[thread_id]['tokens'].append(run.usage.completion_tokens)
+    user_threads_[thread_id]['time'] = datetime.datetime.now()
     collection.update_one(
             {"user": user},
             {"$set": {"threads": user_threads_}}
@@ -300,6 +303,23 @@ def chat():
         'thread_id':thread_id,
         'messages':return_messages,
         'tokens':user_threads_[thread_id]['tokens']
+    })
+
+'''ADMIN ENDPOINTS'''
+
+@app.route('/admin/tokens_history',methods=['GET'])
+def tokens_history():
+    df = []
+    cursor = collection.find({},{"threads":1})
+    for document in cursor:
+        for thread in document["threads"]:
+            item_ = {
+                "time":document["threads"][thread]["time"],
+                "tokens":sum(document["threads"][thread]["tokens"])
+                }
+            df.append(item_)
+    return jsonify({
+        "tokens_times":df
     })
 
 if __name__=='__main__':
