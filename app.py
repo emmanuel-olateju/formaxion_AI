@@ -4,23 +4,26 @@ import json
 import yaml
 import datetime
 import pandas as pd
+import json
 
 
 from flask import Flask,request,jsonify
+from flask_sock import Sock
 from openai import OpenAI
 from symbol_pair import pairs,supported_indicators
 
 import pymongo
 from pymongo import MongoClient
 
-with open("strategy_params.yml", 'r') as file:
+
+with open("strategy_params.yml", "r") as file:
   # Read the file contents
   strategy_params = yaml.safe_load(file)
 
-print('Attmemting MongoDB connection.................')
-cluster = MongoClient(os.environ.get('MONGO_URL'))
+print("Attempting MongoDB connection.................")
+cluster = MongoClient(os.environ.get("MONGO_URL"))
 try:
-    cluster.admin.command('ping')
+    cluster.admin.command("ping")
     print("Pinged your deployment. You successfully connected to MongoDB!")
 except Exception as e:
     print(e)
@@ -31,12 +34,13 @@ collection = db["users_threads"]
 db_connect = True
 
 app = Flask(__name__)
-client = OpenAI(api_key=os.environ.get('OPENAI_KEY'))
+sock = Sock(app)
+client = OpenAI(api_key=os.environ.get("OPENAI_KEY"))
 return_message = None
 
 assistant = client.beta.assistants.create(
-    name='strategy_generator',
-    instructions=f'''
+    name="strategy_generator",
+    instructions=f"""
         You are FormaxionBot, an assistant on the Formaxion website that helps trader in generating strategies for stock trading on Nigerian stock Exchange (NGX).
         Formaxion is a cutting-edge web platform revolutionizing the Nigerian stock trading landscape. Tailored for both seasoned investors and newcomers, 
         traders can create strategies using drag and drop or prompt you to create strategy for them. the generated strategy will be sent to the backtesting engine 
@@ -144,24 +148,24 @@ assistant = client.beta.assistants.create(
                 ]
             )
 
-    ''',
-    model='gpt-3.5-turbo-1106')
+    """,
+    model="gpt-3.5-turbo-1106")
 
 threads = dict()
 
-@app.route('/')
-def fresh():
-    return jsonify({
-    "data": {
+@sock.route("/")
+def fresh(ws):
+    data = ws.receive()
+    ws.send(json.dumps({"data": {
         "message": "Request processed successfully. You can start prompting"
-    }
-})
+    }}))
 
-@app.route('/check_user',methods=['POST'])
-def check_user():
+@sock.route("/check_user")
+def check_user(ws):
 
-    data = request.get_json()
-    user = data.get('username')
+    data = json.loads(ws.receive())
+    print(data)
+    user = data.get("username")
 
     user_ = collection.find_one({"user": user})
     if user_:
@@ -174,77 +178,78 @@ def check_user():
         }
         collection.insert_one(new_user)
 
-    return jsonify({
-        'username':user,
-        'threads':user_threads_
-    })
+    ws.send(json.dumps({
+        "username":user,
+        "threads":json.dumps(user_threads_)
+    }))
 
-@app.route('/get_chat',methods=['POST'])
-def get_chat():
+@sock.route("/get_chat")
+def get_chat(ws):
 
-    data = request.get_json()
-    user = data.get('username')
-    thread_id = data.get('thread_id')
+    data = json.loads(ws.receive())
+    # data = request.get_json()
+    user = data.get("username")
+    thread_id = data.get("thread_id")
 
     user_ = collection.find_one({"user": user})
     if user_:
         user_threads_ = user_.get("threads")
-        messages = user_threads_[thread_id]['messages']
-        tokens = user_threads_[thread_id]['tokens']
-        return jsonify({
-            'username':user,
-            'thread_id':thread_id,
-            'messages':messages,
-            'tokens':tokens
-        })
+        messages = user_threads_[thread_id]["messages"]
+        tokens = user_threads_[thread_id]["tokens"]
+        ws.send(json.dumps({
+            "username":user,
+            "thread_id":thread_id,
+            "messages":json.dumps(messages),
+            "tokens":tokens
+        }))
     else:
         error_response = {
-            'error': 'Bad Request',
-            'message': 'User not found in database'
+            "error": "Bad Request",
+            "message": "User not found in database"
         }
-        return jsonify(error_response), 400
+        ws.send(json.dumps([error_response,400]))
 
 
-@app.route('/new_chat',methods=['POST'])
-def create_chat():
+@sock.route("/new_chat")
+def create_chat(ws):
 
-    data = request.get_json()
-    user = data.get('username')
+    data = json.loads(ws.receive())
+    user = data.get("username")
 
     user_ = collection.find_one({"user": user})
     if user_:
         thread = client.beta.threads.create()
         user_threads_ = user_.get("threads")
         if user_threads_:
-            user_threads_[thread.id]=dict().fromkeys(['name','messages','time','tokens'])
+            user_threads_[thread.id]=dict().fromkeys(["name","messages","time","tokens"])
         else:
-            user_threads_ = {thread.id:dict().fromkeys(['name','messages','time','tokens'])}
+            user_threads_ = {thread.id:dict().fromkeys(["name","messages","time","tokens"])}
         collection.update_one(
                 {"user": user},
                 {"$set": {"threads": user_threads_}}
             )
 
-    return jsonify({
-        'username':user,
-        'threads':user_threads_,
-        'thread_id':thread.id
-    })
+    ws.send(json.dumps({
+        "username":user,
+        "threads":json.dumps(user_threads_),
+        "thread_id":thread.id
+    }))
     
 
-@app.route('/chat',methods=['POST'])
-def chat():
-    data = request.get_json()
-    user = data.get('username')
-    thread_id = data.get('thread_id')
-    message = data.get('message')
+@sock.route("/chat")
+def chat(ws):
+    data = json.loads(ws.receive())
+    user = data.get("username")
+    thread_id = data.get("thread_id")
+    message = data.get("message")
 
     user_ = collection.find_one({"user": user})
     if user_:
         user_threads_ = user_.get("threads")
         if thread_id not in user_threads_:
             error_response = {
-                'error': 'Bad Request',
-                'message': 'Selected chat does not exist for current user'
+                "error": "Bad Request",
+                "message": "Selected chat does not exist for current user"
             }
             return jsonify(error_response), 400
         else:
@@ -257,13 +262,13 @@ def chat():
                 thread_id = thread_id,
                 assistant_id = assistant.id,
             )
-            while run.status in ['queued', 'in_progress', 'cancelling']:
+            while run.status in ["queued", "in_progress", "cancelling"]:
                 time.sleep(1) # Wait for 1 second
                 run = client.beta.threads.runs.retrieve(
                     thread_id = thread_id,
                     run_id = run.id
                 )
-            if run.status == 'completed': 
+            if run.status == "completed": 
                 messages = client.beta.threads.messages.list(
                     thread_id = thread_id
                 )
@@ -275,46 +280,45 @@ def chat():
                         message_id = thread_message.id
                     )
                     return_messages.append({
-                        'role':message.role,
-                        'content':message.content[0].text.value,
+                        "role":message.role,
+                        "content":message.content[0].text.value,
                     })
-
     else:
         error_response = {
-            'error': 'Bad Request',
-            'message': 'user should be created with /new_chat endpoint'
+            "error": "Bad Request",
+            "message": "user should be created with /new_chat endpoint"
         }
         return jsonify(error_response), 400
     
     # update database thread_id with return_messages
-    user_threads_[thread_id]['messages'] = return_messages
-    if user_threads_[thread_id]['tokens'] == None:
-        user_threads_[thread_id]['tokens'] = []
-    user_threads_[thread_id]['tokens'].append(run.usage.prompt_tokens)
-    user_threads_[thread_id]['tokens'].append(run.usage.completion_tokens)
-    user_threads_[thread_id]['time'] = datetime.datetime.now()
+    user_threads_[thread_id]["messages"] = return_messages
+    if user_threads_[thread_id]["tokens"] == None:
+        user_threads_[thread_id]["tokens"] = []
+    user_threads_[thread_id]["tokens"].append(run.usage.prompt_tokens)
+    user_threads_[thread_id]["tokens"].append(run.usage.completion_tokens)
+    user_threads_[thread_id]["time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     collection.update_one(
             {"user": user},
             {"$set": {"threads": user_threads_}}
         )
 
-    return jsonify({
-        'username':user,
-        'thread_id':thread_id,
-        'messages':return_messages,
-        'tokens':user_threads_[thread_id]['tokens']
-    })
+    ws.send(json.dumps({
+        "username":user,
+        "thread_id":thread_id,
+        "messages":json.dumps(return_messages),
+        "tokens":user_threads_[thread_id]["tokens"]
+    }))
 
-'''ADMIN ENDPOINTS'''
+"""ADMIN ENDPOINTS"""
 
-@app.route('/admin/tokens_history',methods=['GET'])
+@app.route("/admin/tokens_history",methods=["GET"])
 def tokens_history():
     df = []
     cursor = collection.find({},{"threads":1})
     for document in cursor:
         for thread in document["threads"]:
             item_ = {
-                "time":document["threads"][thread]["time"],
+                "time":datetime.datetime.strptime(document["threads"][thread]["time"], "%Y-%m-%d %H:%M:%S"),
                 "tokens":sum(document["threads"][thread]["tokens"])
                 }
             df.append(item_)
@@ -322,5 +326,5 @@ def tokens_history():
         "tokens_times":df
     })
 
-if __name__=='__main__':
+if __name__=="__main__":
     app.run(debug=True)
