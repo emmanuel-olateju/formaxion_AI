@@ -40,12 +40,13 @@ socketio = SocketIO(app,cors_allowed_origins="*")
 client = OpenAI(api_key=os.environ.get("OPENAI_KEY"))
 return_message = None
 
-assistant = client.beta.assistants.create(
-    name="strategy_generator",
-    instructions=assistant_instructions(),
-    model="gpt-3.5-turbo-1106")
+# assistant = client.beta.assistants.create(
+#     name="strategy_generator",
+#     instructions=assistant_instructions(),
+#     model="gpt-3.5-turbo-1106")
+assistant = client.beta.assistants.retrieve(os.environ.get("ASSISTANT_ID"))
+print(f"Asssistant ID: {assistant.id}")
 
-# threads = dict()
 
 @app.route("/")
 def index():
@@ -77,6 +78,9 @@ def check_user(message):
         "threads":list(user_threads_.keys())
     })
     emit("user_check_return",message)
+    if "new_user" in locals():
+        del new_user, message
+    del user,user_,user_threads_
 
 @socketio.on("fetch_chat")
 def fetch_chat(message):
@@ -102,6 +106,11 @@ def fetch_chat(message):
         }
         message = json.dumps([error_response,400])
         emit("error",message)
+    if "error_response" in locals():
+        del error_response
+    elif "user_threads_" in locals():
+        del user_threads_,messages,tokens,message
+    del user, thread_id, user_
 
 @socketio.on("new_chat")
 def new_chat(message):
@@ -123,6 +132,7 @@ def new_chat(message):
         "thread_id":thread.id
     })
     emit("new_chat_return",message)
+    del user,user_,thread,user_threads_,message
 
 @socketio.on("chat")
 def chat(message):
@@ -137,6 +147,7 @@ def chat(message):
         "tokens":user_threads_[thread_id]["tokens"][-2:]
     })
     emit("chat_return",response_message)
+    del user,thread_id,message_,return_messages,user_threads_,response_message
 
 @socketio.on("message")
 def message(msg):
@@ -150,6 +161,7 @@ def message(msg):
         "tokens":user_threads_[thread_id]["tokens"][-1]
     })
     emit("message",message_)
+    del user,thread_id,message_,user_threads_,message_
 
 def ping_assistant(user, thread_id, message_):
     user_ = collection.find_one({"user": user})
