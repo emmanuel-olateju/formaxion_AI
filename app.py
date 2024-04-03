@@ -8,13 +8,13 @@ import json
 
 
 from flask import Flask,request,jsonify
-from flask_sock import Sock
+# from flask_sock import Sock
+from flask_socketio import SocketIO, emit
 from openai import OpenAI
-from symbol_pair import pairs,supported_indicators
+from assistant_parameters import assistant_instructions
 
 import pymongo
 from pymongo import MongoClient
-
 
 with open("strategy_params.yml", "r") as file:
   # Read the file contents
@@ -34,139 +34,34 @@ collection = db["users_threads"]
 db_connect = True
 
 app = Flask(__name__)
-sock = Sock(app)
+# sock = Sock(app)
+app.config["SECRET_KEY"] = "ABCDFRHGRPTY"
+socketio = SocketIO(app,cors_allowed_origins="*")
 client = OpenAI(api_key=os.environ.get("OPENAI_KEY"))
 return_message = None
 
 assistant = client.beta.assistants.create(
     name="strategy_generator",
-    instructions=f"""
-        You are FormaxionBot, an assistant on the Formaxion website that helps trader in generating strategies for stock trading on Nigerian stock Exchange (NGX).
-        Formaxion is a cutting-edge web platform revolutionizing the Nigerian stock trading landscape. Tailored for both seasoned investors and newcomers, 
-        traders can create strategies using drag and drop or prompt you to create strategy for them. the generated strategy will be sent to the backtesting engine 
-        for analysis so the strategy you generate must always be in json format. The currently supported indicators are current price, 
-        exponential moving average of price, moving average of price,  relative strength index, standard deviation of price. There will be support for other indicators in the 
-        future.The building blocks of the strategies are asset, weight, conditional, filter which has its corresponding json representation. 
-
-        {pairs} is the company name and symbol pairing for stocks listed on the Nigerian Stock Exchange (NGX) . 
-
-        asset = {{
-            "type":"asset",
-            "symbol":"UBA"    
-        }}
-
-        weight = {{
-            "weight": "weight-specified", 
-            "blocks":[ ]
-        }}
-
-        options for weight  ["weight-equal", "weight-specified"]. must be 2 decimal places and sum must be equal to 1.
-
-        conditional = ((
-            "type": "conditional",
-            "condition": (
-                "subject": (
-                    "function":"moving-average-price", 
-                    "asset":"UBA", 
-                    "period": "1", 
-                    ),
-                "comparison": "greater-than", 
-                "predicate": (
-                    "type":"function", #options: ["function", "value"] 
-                    "function":"moving-average-price",
-                    "period": "1", #days
-                    "asset":"UBA",
-                    
-                    )
-                ),
-            "then": [
-                        (
-                    "type":"asset",
-                    "symbol":"UBA"    
-                    )
-                ],
-            "else": [
-                (
-                    "type":"asset",
-                    "symbol":"ZENITHBANK"    
-                )
-                ],
-        ))
-        option for function is ["current_price", "moving-average-price","relative-strength-index","exponential-moving-average-price","standard-deviation-price"]
-        option for comparison is ["greater-than", "less-than"]
-        filter = ((
-            "type": "filter",
-            "sort":()
-                "function":"moving-average-price",
-                "period": "1",
-                ),
-            "select":["top, 5"], #options: ["top, 5", "bottom, 5"] number could between 5 to 15
-            ))
-
-        example of stratgey using above blocks is strategy = ((
-            "name": "test1",
-            "description": "test1",
-            "rebalance_frequency": "weekly",
-            "weight": (
-                "type":"weight-specified",
-                "blocks":[
-                    (
-                    "value":0.65,
-                    "type":"asset",
-                    "symbol":"UBA"  
-                    ),
-                    (
-                        "value":0.35,
-                        "type": "conditional",
-                            "condition": ((
-                                "subject": (
-                                    "function":"moving-average-price",
-                                    "asset":"UBA",
-                                    "period": "1",
-                                    ),
-                                "comparison": "greater-than",
-                                "predicate": (
-                                    "type":"function",
-                                    "function":"moving-average-price",
-                                    "asset":"ZENITHBANK",
-                                    "period": "1",
-                                    )
-                                )),
-                            "then": [
-                                        (
-                                    "type":"asset",
-                                    "symbol":"ZENITHBANK"    
-                                    )
-                                ],
-                            "else": [
-                                (
-                                    "type":"asset",
-                                    "symbol":"CONOIL"    
-                                )
-                            ],
-                    )
-                ]
-            )
-
-    """,
+    instructions=assistant_instructions(),
     model="gpt-3.5-turbo-1106")
 
-threads = dict()
+# threads = dict()
 
-@sock.route("/")
-def fresh(ws):
-    data = ws.receive()
-    ws.send(json.dumps({"data": {
-        "message": "Request processed successfully. You can start prompting"
-    }}))
+@app.route("/")
+def index():
+    return "Hello"
 
-@sock.route("/check_user")
-def check_user(ws):
+@socketio.on("connect")
+def handle_connect():
+    print("connected")
 
-    data = json.loads(ws.receive())
-    print(data)
-    user = data.get("username")
+@socketio.on("diconnect")
+def handle_disconnect():
+    print("disconnected")
 
+@socketio.on("check_user")
+def check_user(message):
+    user = message.get("username")
     user_ = collection.find_one({"user": user})
     if user_:
         user_threads_ = user_.get("threads")
@@ -177,45 +72,40 @@ def check_user(ws):
             "threads": user_threads_
         }
         collection.insert_one(new_user)
-
-    ws.send(json.dumps({
+    message = json.dumps({
         "username":user,
-        "threads":json.dumps(user_threads_)
-    }))
+        "threads":list(user_threads_.keys())
+    })
+    emit("user_check_return",message)
 
-@sock.route("/get_chat")
-def get_chat(ws):
-
-    data = json.loads(ws.receive())
-    # data = request.get_json()
-    user = data.get("username")
-    thread_id = data.get("thread_id")
+@socketio.on("fetch_chat")
+def fetch_chat(message):
+    user = message.get("username")
+    thread_id = message.get("thread_id")
 
     user_ = collection.find_one({"user": user})
     if user_:
         user_threads_ = user_.get("threads")
         messages = user_threads_[thread_id]["messages"]
         tokens = user_threads_[thread_id]["tokens"]
-        ws.send(json.dumps({
+        message = json.dumps({
             "username":user,
             "thread_id":thread_id,
-            "messages":json.dumps(messages),
+            "messages":messages,
             "tokens":tokens
-        }))
+        })
+        emit("fetch_chat_return",message)
     else:
         error_response = {
             "error": "Bad Request",
             "message": "User not found in database"
         }
-        ws.send(json.dumps([error_response,400]))
+        message = json.dumps([error_response,400])
+        emit("error",message)
 
-
-@sock.route("/new_chat")
-def create_chat(ws):
-
-    data = json.loads(ws.receive())
-    user = data.get("username")
-
+@socketio.on("new_chat")
+def new_chat(message):
+    user = message.get("username")
     user_ = collection.find_one({"user": user})
     if user_:
         thread = client.beta.threads.create()
@@ -228,21 +118,40 @@ def create_chat(ws):
                 {"user": user},
                 {"$set": {"threads": user_threads_}}
             )
-
-    ws.send(json.dumps({
+    message = json.dumps({
         "username":user,
-        "threads":json.dumps(user_threads_),
         "thread_id":thread.id
-    }))
-    
+    })
+    emit("new_chat_return",message)
 
-@sock.route("/chat")
-def chat(ws):
-    data = json.loads(ws.receive())
-    user = data.get("username")
-    thread_id = data.get("thread_id")
-    message = data.get("message")
+@socketio.on("chat")
+def chat(message):
+    user = message.get("username")
+    thread_id = message.get("thread_id")
+    message_ = message.get("message")
+    return_messages, user_threads_ = ping_assistant(user=user,thread_id=thread_id, message_=message_)
+    response_message = json.dumps({
+        "username":user,
+        "thread_id":thread_id,
+        "messages":return_messages[-1]["content"],
+        "tokens":user_threads_[thread_id]["tokens"][-2:]
+    })
+    emit("chat_return",response_message)
 
+@socketio.on("message")
+def message(msg):
+    user="test_user"
+    thread_id="thread_xFAEVZO3i2ver7ouQN7ykuBD"
+    message_ = msg
+    return_messages, user_threads_ = ping_assistant(user=user, thread_id=thread_id,message_=message_)
+    message_ = json.dumps({
+        "messages":return_messages[-1]["content"],
+        "thread_id":thread_id,
+        "tokens":user_threads_[thread_id]["tokens"][-1]
+    })
+    emit("message",message_)
+
+def ping_assistant(user, thread_id, message_):
     user_ = collection.find_one({"user": user})
     if user_:
         user_threads_ = user_.get("threads")
@@ -251,12 +160,14 @@ def chat(ws):
                 "error": "Bad Request",
                 "message": "Selected chat does not exist for current user"
             }
-            return jsonify(error_response), 400
+            error_response = json.dumps([error_response,400])
+            emit("error",error_response)
+            return
         else:
-            message = client.beta.threads.messages.create(
+            message_ = client.beta.threads.messages.create(
                 thread_id = thread_id,
                 role = "user",
-                content = message
+                content = message_
             )
             run = client.beta.threads.runs.create(
                 thread_id = thread_id,
@@ -288,7 +199,9 @@ def chat(ws):
             "error": "Bad Request",
             "message": "user should be created with /new_chat endpoint"
         }
-        return jsonify(error_response), 400
+        error_response = json.dumps([error_response,400])
+        emit("error",error_response)
+        return
     
     # update database thread_id with return_messages
     user_threads_[thread_id]["messages"] = return_messages
@@ -301,16 +214,11 @@ def chat(ws):
             {"user": user},
             {"$set": {"threads": user_threads_}}
         )
+    
+    return return_messages,user_threads_
 
-    ws.send(json.dumps({
-        "username":user,
-        "thread_id":thread_id,
-        "messages":json.dumps(return_messages),
-        "tokens":user_threads_[thread_id]["tokens"]
-    }))
-
-"""ADMIN ENDPOINTS"""
-
+    
+# """ADMIN ENDPOINTS"""
 @app.route("/admin/tokens_history",methods=["GET"])
 def tokens_history():
     df = []
@@ -327,4 +235,4 @@ def tokens_history():
     })
 
 if __name__=="__main__":
-    app.run(debug=True)
+    socketio.run(app)
