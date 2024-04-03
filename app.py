@@ -139,29 +139,29 @@ def chat(message):
     user = message.get("username")
     thread_id = message.get("thread_id")
     message_ = message.get("message")
-    return_messages, user_threads_ = ping_assistant(user=user,thread_id=thread_id, message_=message_)
+    user_threads_ = ping_assistant(user=user,thread_id=thread_id, message_=message_)
     response_message = json.dumps({
         "username":user,
         "thread_id":thread_id,
-        "messages":return_messages[-1]["content"],
+        "messages":user_threads_[thread_id]["messages"][-1]["content"],
         "tokens":user_threads_[thread_id]["tokens"][-2:]
     })
     emit("chat_return",response_message)
-    del user,thread_id,message_,return_messages,user_threads_,response_message
+    del user,thread_id,message_,user_threads_,response_message
 
 @socketio.on("message")
 def message(msg):
     user="test_user"
     thread_id="thread_xFAEVZO3i2ver7ouQN7ykuBD"
     message_ = msg
-    return_messages, user_threads_ = ping_assistant(user=user, thread_id=thread_id,message_=message_)
+    user_threads_ = ping_assistant(user=user, thread_id=thread_id,message_=message_)
     message_ = json.dumps({
-        "messages":return_messages[-1]["content"],
+        "messages":user_threads_[thread_id]["messages"][-1]["content"],
         "thread_id":thread_id,
         "tokens":user_threads_[thread_id]["tokens"][-1]
     })
     emit("message",message_)
-    del user,thread_id,message_,user_threads_,message_
+    del user,thread_id,message_,user_threads_
 
 def ping_assistant(user, thread_id, message_):
     user_ = collection.find_one({"user": user})
@@ -185,27 +185,28 @@ def ping_assistant(user, thread_id, message_):
                 thread_id = thread_id,
                 assistant_id = assistant.id,
             )
+            print("---------------------------")
+            print(f"run start time: {time.time()}")
             while run.status in ["queued", "in_progress", "cancelling"]:
-                time.sleep(1) # Wait for 1 second
+                # time.sleep(0.005) # Wait for 1 second
                 run = client.beta.threads.runs.retrieve(
                     thread_id = thread_id,
                     run_id = run.id
                 )
-            if run.status == "completed": 
+            print(f"run stop time: {time.time()}")
+            if run.status == "completed":
+                print(f"run completion time: {time.time()}") 
                 messages = client.beta.threads.messages.list(
                     thread_id = thread_id
                 )
-                messages.data.reverse()
-                return_messages = []
-                for thread_message in messages.data:
-                    message = client.beta.threads.messages.retrieve(
-                        thread_id = thread_id,
-                        message_id = thread_message.id
-                    )
-                    return_messages.append({
-                        "role":message.role,
-                        "content":message.content[0].text.value,
+                print(type(messages.data[0].role),messages.data[0].content[0].text.value)
+                print(type(messages.data[1].role),messages.data[1].content[0].text.value)
+                for i in [1,0]:
+                    user_threads_[thread_id]["messages"].append({
+                        "role":messages.data[i].role,
+                        "content":messages.data[i].content[0].text.value
                     })
+            print(f"message processing time: {time.time()}")
     else:
         error_response = {
             "error": "Bad Request",
@@ -215,8 +216,6 @@ def ping_assistant(user, thread_id, message_):
         emit("error",error_response)
         return
     
-    # update database thread_id with return_messages
-    user_threads_[thread_id]["messages"] = return_messages
     if user_threads_[thread_id]["tokens"] == None:
         user_threads_[thread_id]["tokens"] = []
     user_threads_[thread_id]["tokens"].append(run.usage.prompt_tokens)
@@ -227,7 +226,7 @@ def ping_assistant(user, thread_id, message_):
             {"$set": {"threads": user_threads_}}
         )
     
-    return return_messages,user_threads_
+    return user_threads_
 
     
 # """ADMIN ENDPOINTS"""
