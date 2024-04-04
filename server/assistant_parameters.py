@@ -1,4 +1,4 @@
-from symbol_pair import pairs,supported_indicators
+from .symbol_pair import pairs,supported_indicators
 
 def assistant_instructions():
     
