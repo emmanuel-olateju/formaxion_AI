@@ -11,7 +11,7 @@ from flask import Flask,request,jsonify
 # from flask_sock import Sock
 from flask_socketio import SocketIO, emit
 from openai import OpenAI
-from assistant_parameters import assistant_instructions
+from .assistant_parameters import assistant_instructions
 
 import pymongo
 from pymongo import MongoClient
@@ -40,10 +40,6 @@ socketio = SocketIO(app,cors_allowed_origins="*")
 client = OpenAI(api_key=os.environ.get("OPENAI_KEY"))
 return_message = None
 
-# assistant = client.beta.assistants.create(
-#     name="strategy_generator",
-#     instructions=assistant_instructions(),
-#     model="gpt-3.5-turbo-1106")
 assistant = client.beta.assistants.retrieve(os.environ.get("ASSISTANT_ID"))
 print(f"Asssistant ID: {assistant.id}")
 
@@ -227,6 +223,87 @@ def ping_assistant(user, thread_id, message_):
         )
     
     return user_threads_
+
+@app.route('/')
+def fresh():
+    return jsonify({
+    "data": {
+        "message": "Request processed successfully. You can start prompting"
+    }
+})
+
+@app.route('/check_user',methods=['POST'])
+def check_user():
+
+    data = request.get_json()
+    user = data.get('username')
+
+    user_ = collection.find_one({"user": user})
+    if user_:
+        user_threads_ = user_.get("threads")
+    else:
+        user_threads_ = {}
+        new_user = {
+            "user": user,
+            "threads": user_threads_
+        }
+        collection.insert_one(new_user)
+
+    return jsonify({
+        'username':user,
+        'threads':user_threads_
+    })
+
+@app.route('/get_chat',methods=['POST'])
+def get_chat():
+
+    data = request.get_json()
+    user = data.get('username')
+    thread_id = data.get('thread_id')
+
+    user_ = collection.find_one({"user": user})
+    if user_:
+        user_threads_ = user_.get("threads")
+        messages = user_threads_[thread_id]['messages']
+        tokens = user_threads_[thread_id]['tokens']
+        return jsonify({
+            'username':user,
+            'thread_id':thread_id,
+            'messages':messages,
+            'tokens':tokens
+        })
+    else:
+        error_response = {
+            'error': 'Bad Request',
+            'message': 'User not found in database'
+        }
+        return jsonify(error_response), 400
+
+
+@app.route('/new_chat',methods=['POST'])
+def create_chat():
+
+    data = request.get_json()
+    user = data.get('username')
+
+    user_ = collection.find_one({"user": user})
+    if user_:
+        thread = client.beta.threads.create()
+        user_threads_ = user_.get("threads")
+        if user_threads_:
+            user_threads_[thread.id]=dict().fromkeys(['name','messages','time','tokens'])
+        else:
+            user_threads_ = {thread.id:dict().fromkeys(['name','messages','time','tokens'])}
+        collection.update_one(
+                {"user": user},
+                {"$set": {"threads": user_threads_}}
+            )
+
+    return jsonify({
+        'username':user,
+        'threads':user_threads_,
+        'thread_id':thread.id
+    })
 
     
 # """ADMIN ENDPOINTS"""
