@@ -44,10 +44,6 @@ assistant = client.beta.assistants.retrieve(os.environ.get("ASSISTANT_ID"))
 print(f"Asssistant ID: {assistant.id}")
 
 
-@app.route("/")
-def index():
-    return "Hello"
-
 @socketio.on("connect")
 def handle_connect():
     print("connected")
