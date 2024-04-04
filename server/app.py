@@ -16,10 +16,6 @@ from .assistant_parameters import assistant_instructions
 import pymongo
 from pymongo import MongoClient
 
-with open("strategy_params.yml", "r") as file:
-  # Read the file contents
-  strategy_params = yaml.safe_load(file)
-
 print("Attempting MongoDB connection.................")
 cluster = MongoClient(os.environ.get("MONGO_URL"))
 try:
