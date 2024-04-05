@@ -40,17 +40,14 @@ assistant = client.beta.assistants.retrieve(os.environ.get("ASSISTANT_ID"))
 print(f"Asssistant ID: {assistant.id}")
 
 
-@socketio.on("connect")
-def handle_connect():
-    print("connected")
 
-@socketio.on("diconnect")
-def handle_disconnect():
-    print("disconnected")
+"""REST ENDPOINTS"""
+@app.route("/check_user",methods=["POST"])
+def check_user():
 
-@socketio.on("check_user")
-def check_user(message):
-    user = message.get("username")
+    data = request.get_json()
+    user = data.get("username")
+
     user_ = collection.find_one({"user": user})
     if user_:
         user_threads_ = user_.get("threads")
@@ -61,49 +58,38 @@ def check_user(message):
             "threads": user_threads_
         }
         collection.insert_one(new_user)
-    message = json.dumps({
+
+    return json.dumps({
         "username":user,
         "threads":list(user_threads_.keys())
     })
-    emit("user_check_return",message)
-    if "new_user" in locals():
-        del new_user, message
-    del user,user_,user_threads_
 
-@socketio.on("fetch_chat")
-def fetch_chat(message):
-    user = message.get("username")
-    thread_id = message.get("thread_id")
+@app.route("/chat/<username>/<thread_id>/get_chat",methods=["GET"])
+def get_chat(username, thread_id):
 
-    user_ = collection.find_one({"user": user})
+    user_ = collection.find_one({"user": username})
     if user_:
         user_threads_ = user_.get("threads")
         messages = user_threads_[thread_id]["messages"]
         tokens = user_threads_[thread_id]["tokens"]
-        message = json.dumps({
-            "username":user,
+        return jsonify({
+            "username":username,
             "thread_id":thread_id,
             "messages":messages,
             "tokens":tokens
         })
-        emit("fetch_chat_return",message)
     else:
         error_response = {
             "error": "Bad Request",
             "message": "User not found in database"
         }
-        message = json.dumps([error_response,400])
-        emit("error",message)
-    if "error_response" in locals():
-        del error_response
-    elif "user_threads_" in locals():
-        del user_threads_,messages,tokens,message
-    del user, thread_id, user_
+        return jsonify(error_response), 400
 
-@socketio.on("new_chat")
-def new_chat(message):
-    user = message.get("username")
-    user_ = collection.find_one({"user": user})
+
+@app.route("/chat/<username>/new_chat",methods=["GET"])
+def create_chat(username):
+
+    user_ = collection.find_one({"user": username})
     if user_:
         thread = client.beta.threads.create()
         user_threads_ = user_.get("threads")
@@ -112,15 +98,26 @@ def new_chat(message):
         else:
             user_threads_ = {thread.id:dict().fromkeys(["name","messages","time","tokens"])}
         collection.update_one(
-                {"user": user},
+                {"user": username},
                 {"$set": {"threads": user_threads_}}
             )
-    message = json.dumps({
-        "username":user,
-        "thread_id":thread.id
-    })
-    emit("new_chat_return",message)
-    del user,user_,thread,user_threads_,message
+
+        return jsonify({
+            "username":username,
+            "thread_id":thread.id,
+            "name":user_threads_[thread.id]["name"]
+        })
+
+
+
+"""WEB SOCKET CONNECTIONS"""
+@socketio.on("connect")
+def handle_connect():
+    print("connected")
+
+@socketio.on("diconnect")
+def handle_disconnect():
+    print("disconnected")
 
 @socketio.on("chat")
 def chat(message):
@@ -135,6 +132,7 @@ def chat(message):
         "tokens":user_threads_[thread_id]["tokens"][-2:]
     })
     emit("chat_return",response_message)
+    print("Emitted")
     del user,thread_id,message_,user_threads_,response_message
 
 @socketio.on("message")
@@ -183,6 +181,8 @@ def ping_assistant(user, thread_id, message_):
                 )
             print(f"run stop time: {time.time()}")
             if run.status == "completed":
+                if user_threads_[thread_id]["messages"]==None:
+                    user_threads_[thread_id]["messages"] = []
                 print(f"run completion time: {time.time()}") 
                 messages = client.beta.threads.messages.list(
                     thread_id = thread_id
@@ -216,89 +216,8 @@ def ping_assistant(user, thread_id, message_):
     
     return user_threads_
 
-@app.route('/')
-def fresh():
-    return jsonify({
-    "data": {
-        "message": "Request processed successfully. You can start prompting"
-    }
-})
 
-@app.route('/check_user',methods=['POST'])
-def check_user():
-
-    data = request.get_json()
-    user = data.get('username')
-
-    user_ = collection.find_one({"user": user})
-    if user_:
-        user_threads_ = user_.get("threads")
-    else:
-        user_threads_ = {}
-        new_user = {
-            "user": user,
-            "threads": user_threads_
-        }
-        collection.insert_one(new_user)
-
-    return jsonify({
-        'username':user,
-        'threads':user_threads_
-    })
-
-@app.route('/get_chat',methods=['POST'])
-def get_chat():
-
-    data = request.get_json()
-    user = data.get('username')
-    thread_id = data.get('thread_id')
-
-    user_ = collection.find_one({"user": user})
-    if user_:
-        user_threads_ = user_.get("threads")
-        messages = user_threads_[thread_id]['messages']
-        tokens = user_threads_[thread_id]['tokens']
-        return jsonify({
-            'username':user,
-            'thread_id':thread_id,
-            'messages':messages,
-            'tokens':tokens
-        })
-    else:
-        error_response = {
-            'error': 'Bad Request',
-            'message': 'User not found in database'
-        }
-        return jsonify(error_response), 400
-
-
-@app.route('/new_chat',methods=['POST'])
-def create_chat():
-
-    data = request.get_json()
-    user = data.get('username')
-
-    user_ = collection.find_one({"user": user})
-    if user_:
-        thread = client.beta.threads.create()
-        user_threads_ = user_.get("threads")
-        if user_threads_:
-            user_threads_[thread.id]=dict().fromkeys(['name','messages','time','tokens'])
-        else:
-            user_threads_ = {thread.id:dict().fromkeys(['name','messages','time','tokens'])}
-        collection.update_one(
-                {"user": user},
-                {"$set": {"threads": user_threads_}}
-            )
-
-    return jsonify({
-        'username':user,
-        'threads':user_threads_,
-        'thread_id':thread.id
-    })
-
-    
-# """ADMIN ENDPOINTS"""
+"""ADMIN REST ENDPOINTS"""
 @app.route("/admin/tokens_history",methods=["GET"])
 def tokens_history():
     df = []
@@ -313,6 +232,8 @@ def tokens_history():
     return jsonify({
         "tokens_times":df
     })
+
+
 
 if __name__=="__main__":
     socketio.run(app)
